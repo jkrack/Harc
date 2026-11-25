@@ -20,7 +20,7 @@ public enum HarcVersion {
     /// the xctest runner. `VersionTests` asserts this stays equal to
     /// `project.yml`'s `MARKETING_VERSION`, which is the check that would have
     /// caught the original drift.
-    public static let fallbackVersion = "0.14.23"
+    public static let fallbackVersion = "0.14.24"
 
     /// Engine identity, not an Apple asset revision: OS-managed model revisions
     /// are not exposed. Legacy engines require explicit selection.
