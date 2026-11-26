@@ -31,6 +31,7 @@ enum HarcMobileUITestConfigurationError: LocalizedError, Equatable {
     case invalidRootValue(String)
     case duplicateResetRootArgument
     case resetRootWithoutRootID
+    case invalidLocalRecordingFixtureArguments
 
     var errorDescription: String? {
         switch self {
@@ -44,6 +45,8 @@ enum HarcMobileUITestConfigurationError: LocalizedError, Equatable {
             "The UI-test reset-root argument was repeated."
         case .resetRootWithoutRootID:
             "The UI-test reset-root argument requires a scoped root UUID."
+        case .invalidLocalRecordingFixtureArguments:
+            "The local recording fixture requires one recording flag and a freshly reset scoped root; fixture flags cannot repeat."
         }
     }
 }
@@ -147,6 +150,7 @@ final class HarcMobileAppModel {
     private(set) var readiness: Readiness = .starting
     private(set) var bootstrapCompleted = false
     private(set) var rejectedCaptureMetadataFiles: [URL] = []
+    private(set) var localTranscription: HarcMobileLocalTranscriptionCoordinator?
     private(set) var captureCoordinator: HarcMobileCaptureCoordinator?
     private(set) var pairingCoordinator: HarcMobilePairingCoordinator?
     private(set) var transferCoordinator: HarcMobileTransferCoordinator?
@@ -179,6 +183,17 @@ final class HarcMobileAppModel {
                     arguments: processArguments,
                     rootID: uiTestRootID
                 )
+#if DEBUG
+            let localFixtureCount = processArguments.count { $0 == "--harc-ui-test-local-recording" }
+            let exhaustedFixtureCount = processArguments.count { $0 == "--harc-ui-test-local-recording-storage-exhausted" }
+            let longPlaybackFixtureCount = processArguments.count { $0 == "--harc-ui-test-long-playback-recording" }
+            if localFixtureCount > 0 || exhaustedFixtureCount > 0 || longPlaybackFixtureCount > 0 {
+                guard localFixtureCount == 1, exhaustedFixtureCount <= 1, longPlaybackFixtureCount <= 1,
+                      uiTestRootID != nil, shouldResetUITestRoot else {
+                    throw HarcMobileUITestConfigurationError.invalidLocalRecordingFixtureArguments
+                }
+            }
+#endif
             let root = try Self.applicationRoot(
                 uiTestRootID: uiTestRootID,
                 resetUITestRoot: shouldResetUITestRoot
@@ -242,6 +257,24 @@ final class HarcMobileAppModel {
                 store: store,
                 locations: captureLocations,
                 currentRoot: root
+            )
+#if DEBUG
+            // Real local WAV and durable sidecar, confined to a freshly reset test root.
+            // No microphone, adoption, receipt, transcript, or network evidence is invented.
+            if uiTestRootID != nil, shouldResetUITestRoot,
+               processArguments.contains("--harc-ui-test-local-recording") {
+                try Self.seedLocalRecordingForUITesting(
+                    locations: captureLocations, deviceID: identity.deviceID,
+                    storageExhausted: exhaustedFixtureCount == 1,
+                    durationSeconds: longPlaybackFixtureCount == 1 ? 600 : 60
+                )
+            }
+#endif
+            localTranscription = HarcMobileLocalTranscriptionCoordinator(
+                store: HarcMobileLocalTranscriptStore(
+                    root: root.appendingPathComponent("LocalTranscripts", isDirectory: true)
+                ),
+                foreground: UIApplication.shared.applicationState == .active
             )
             let recovered = try prepareLocalCapture(
                 store: store, locations: captureLocations,
@@ -327,6 +360,16 @@ final class HarcMobileAppModel {
             transfer.reconcileBackgroundUploads()
             library.refresh()
             hostHealth.startMonitoring()
+            let transcriptCandidates = (try? store.recordingOutboxes())?.map {
+                HarcMobileTranscriptRequest(capture: $0.finalizedCapture.capture,
+                    audioURL: $0.finalizedCapture.masterFileURL)
+            } ?? []
+            Task { [weak self] in
+                await self?.localTranscription?.restore(transcriptCandidates)
+                for master in recovered {
+                    self?.transcribeLocalRecording(master.originRecordingID.recordingUUID)
+                }
+            }
         } catch {
             readiness = .failed(error.localizedDescription)
         }
@@ -451,6 +494,41 @@ final class HarcMobileAppModel {
         }
     }
 
+#if DEBUG
+    private static func seedLocalRecordingForUITesting(
+        locations: HarcMobileCaptureLocations,
+        deviceID: DeviceID,
+        storageExhausted: Bool,
+        durationSeconds: Int
+    ) throws {
+        let start = Date.now.addingTimeInterval(-Double(durationSeconds))
+        let writer = try HarcMobileDurableMasterWriter(
+            locations: locations, producingDeviceID: deviceID,
+            captureStartedAt: start, captureStartedMonotonicNanoseconds: 1_000
+        )
+        // Canonical audio is signed 16-bit little-endian mono PCM at 16 kHz.
+        // Alternate audible tone and silence so the real extracted envelope is visible.
+        // Reuse the same one-second buffers so a longer playback fixture does
+        // not multiply main-thread tone generation or allocate a full long WAV.
+        var tone = Data(capacity: 32_000)
+        for frame in 0..<16_000 {
+            var sample = Int16(sin(2 * Double.pi * 440 * Double(frame) / 16_000) * 4_000).littleEndian
+            withUnsafeBytes(of: &sample) { tone.append(contentsOf: $0) }
+        }
+        let silence = Data(repeating: 0, count: 32_000)
+        for second in 0..<durationSeconds {
+            try writer.appendCanonicalPCM(
+                second.isMultiple(of: 2) ? tone : silence,
+                endedAt: start.addingTimeInterval(Double(second + 1)),
+                endedMonotonicNanoseconds: 1_000 + UInt64(second + 1) * 1_000_000_000
+            )
+        }
+        _ = try writer.finalize(reason: storageExhausted ? .storageExhausted : .userStopped)
+        // This optional finalization reason is synthetic UI coverage, not a disk-full drill.
+        // Normal startup recovery validates the real bytes and registers the outbox.
+    }
+#endif
+
     @discardableResult
     func prepareLocalCapture(
         store: HarcTransferStore,
@@ -468,18 +546,35 @@ final class HarcMobileAppModel {
             producingDeviceID: store.installationDeviceID,
             locations: locations,
             storageExhaustionAfterCanonicalBytesForTesting:
-                storageExhaustionAfterCanonicalBytesForTesting
+                storageExhaustionAfterCanonicalBytesForTesting,
+            onCaptureActivityChanged: { [weak self] active in
+                self?.localTranscription?.setCaptureActive(active)
+            }
         ) { [weak self] master in
             guard let self, let store = self.transferStore else {
                 throw CocoaError(.fileNoSuchFile)
             }
+            let capture = try Self.finalizedCapture(master)
             _ = try store.persistFinalizedCapture(
-                try Self.finalizedCapture(master),
+                capture,
                 masterFileURL: master.masterFileURL
             )
             self.transferCoordinator?.enqueue(master)
+            self.localTranscription?.enqueue(HarcMobileTranscriptRequest(
+                capture: capture, audioURL: master.masterFileURL
+            ))
         }
         return report.masters
+    }
+
+    func transcribeLocalRecording(_ id: UUID) {
+        guard let outbox = try? transferStore?.recordingOutboxes().first(where: {
+            $0.finalizedCapture.capture.originRecordingID.recordingUUID == id
+        }), outbox.finalizedCapture.masterFileState == .present else { return }
+        localTranscription?.enqueue(HarcMobileTranscriptRequest(
+            capture: outbox.finalizedCapture.capture,
+            audioURL: outbox.finalizedCapture.masterFileURL
+        ))
     }
 
     static func recoverCaptures(

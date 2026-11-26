@@ -107,6 +107,10 @@ public final class HarcAppBridge: ObservableObject {
     /// The configured role is only a preference; this reports whether the
     /// resident Host graph actually completed startup.
     @Published public var hostRuntimeReady: Bool = false
+#if DEBUG
+    // Set only after the isolated UI fixture acquires its synthetic Host lease.
+    @Published public var projectReviewFixtureReady: Bool = false
+#endif
     @Published public var hostDevices: [HarcHostDevicePresentation] = []
     @Published public var hostDevicesLoaded = false
     @Published public var hostDevicesError: String?

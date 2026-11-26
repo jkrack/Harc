@@ -993,3 +993,66 @@ deferral spends no retry budget. Validate with the app's
 HarcHostProcessingDiagnosticTests, HarcHostProcessingRequestValidationTests and
 HarcHostProcessingWorkerMetadataTests; synthetic fixtures do not qualify live Host
 recovery or real audio.
+
+Mobile after-save Apple speech previews are independent derived artifacts, not
+canonical Host transcripts or speaker evidence. Save/register protected audio and
+start transfer without awaiting inference. Cancel inference for capture or app
+backgrounding; suppress late presentation across cancellation. An already-started immutable
+preview commit may finish, but only complete, validated output is retained. Keep origin,
+PCM hash and frame-count binding, explicit model download, offline-only routine
+processing and Host-first non-destructive display reconciliation. Validate with
+`HarcMobileLocalTranscriptionTests` and the HarcMobile Xcode build; these do not
+qualify physical model availability or the codec/Host round trip.
+
+The Mac STT daemon defaults to Apple's on-device SpeechTranscriber (English),
+using original-file audio time attributes for word/diarization alignment. Missing
+assets or unavailable hardware fail processing visibly without cloud or legacy
+fallback; AssetInventory downloads model assets only. The explicit v2/unified
+CLI overrides remain local diagnostic options. Reusing a daemon requires matching
+engine identity, and persisted readiness is engine-scoped. Apple asset revisions
+are OS-managed and not exposed; do not invent a revision from the engine name.
+Validate AppleSpeechEngineTests, ASREngineSelectionTests, DaemonLauncherTests and
+SpeechEngineIdentityTests, plus opt-in TranscriberTests on real Apple assets.
+This changes neither iPhone capture/transfer codecs nor their qualification gate.
+
+Project refinement is currently a local Store foundation, not an enabled UI or
+Host RPC. Accepted recording/project reviews preserve human assignments across
+retranscription, separately marking stale transcript evidence. Canonical identity
+and active (not trashed) recordings remain mandatory. General metadata revisions
+are provenance, not transcript freshness. Keep reject and unsure durable and distinct, operation replay idempotent,
+and undo compare-and-swap protected against later decisions. Impact counts actual
+changed relationships, never estimated precision. Do not promote aliases or
+speaker enrollment from project answers. Validate with ProjectRefinementTests;
+UI/sync/extraction need separate implementation and qualification.
+
+ProjectRefinementPanel is a reusable, unhosted local-canonical UI, not enabled
+for Client mirrors. Restore recent answer/undo history from Store; current action
+feedback must never come from that historical list. Reopening while a save is
+in flight must reactivate and reload without dropping its receipt. Set-aside
+stale evidence can explicitly reopen for refreshed review, preserving prior
+answer events. Validate ProjectRefinementViewModelTests and
+ProjectRefinementTests; package passes do not qualify app/VoiceOver behavior.
+
+The Host Connections sheet requires the live resident Host and its exact Store.
+Panel mutations also bind the Host library/authority/state tuple transactionally,
+on top of Store's writer lease checks. Never enable this for phone or secondary
+client mirrors without a separately qualified RPC. Three-card completion is not
+queue exhaustion. Validate ProjectRefinementTests and
+ProjectRefinementViewModelTests, then app-hosted navigation and accessibility.
+
+The literal project-name proposal producer is an opt-in Store API, not an
+installed scheduler or semantic classifier. Keep caller-selected sources bounded,
+Host-bound snapshot/commit validation atomic, and existing human answers intact.
+Pending candidates are hypotheses, not assignments or precision measurements.
+Validate ProjectMentionProducerTests; The Host-only consent UI selects only the current Library recording and requires
+an explicit unchecked opt-in before each scan; project creation alone does not
+scan. Validate testProjectConnectionsExplicitSingleSourceConsent in the app.
+Never run synthetic producers on an owner's Library.
+
+ProjectEvidenceContract is inert stage-one infrastructure: versioned owner brief,
+Host-bound selected original transcript and strict fake/model response validation.
+A unique verbatim span proves source presence, not semantic truth. No model call,
+candidate persistence or UI activation is provided yet. Validate
+ProjectEvidenceContractTests. Future inference must reuse serialized local
+SummarizerService and authoritative completion checks; never reuse the lexical
+all-library index or interpolated chunk timestamps as semantic evidence.

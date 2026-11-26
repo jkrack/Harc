@@ -1,10 +1,16 @@
 # HarcMobile current-candidate readiness
 
-**Updated:** 2026-11-14
-**Candidate configuration:** HarcMobile 0.14.22 (77), iOS 26+, iPhone only
+**Updated:** 2026-11-24
+**Candidate configuration:** HarcMobile 0.14.24 (80), iOS 26+, iPhone only
 **Decision:** NO-GO for App Store submission; candidate identification is not qualification.
 **Sealed phone release source:** Not selected. Archive identity, executable digest, CDHash,
 provisioning profile, and exact-build qualification manifests are unrecorded.
+
+Version 0.14.24 (80) is provisional source preparation. Verify that build 80
+has not been used in App Store Connect before creating or uploading a signed
+candidate; if it has, allocate an unused build and repeat the exact-source
+checks. Build 79 was used by earlier, different release inputs. No earlier
+codec, archive, upgrade or TestFlight result qualifies this candidate.
 
 This is the active candidate and gap register. Update its configuration when
 source version/build changes, then attach evidence scoped to the exact pushed
@@ -32,6 +38,80 @@ physical qualification phone.
 The [historical readiness record](2026-08-09-harcmobile-app-store-readiness.md)
 retains its 0.14.10 (65), 0.14.3, and sealed 0.14.1 observations. Those observations
 remain useful history and must not be relabeled as current-candidate qualification.
+
+## November 17 playhead and haptics integration
+
+The shared 0.14.23 (79) preparation now includes iPhone haptics from `7f3c047`
+and the requested Mac speaker playhead through `57c1c5d`. See the
+[exact-source validation handoff](2026-11-17-combined-release-playhead.md).
+The earlier `7f3c047` development archive and signed Mac DMG are retained as
+preparation evidence, not relabeled as the later source. Full hosted CI and
+final source-bound artifact checks remain required. Graph/project-refinement
+work is not included, and LLM summarization is unchanged. Owner-only TestFlight
+scope and all physical/codec/release limitations below are unchanged.
+
+## November 18 graph and playhead source integration
+
+Release integration starts at `8a0f013`, combining graph/consent integration
+`f5b9c0f` with playhead source `49f776d`. Unlike the earlier preparation
+candidate, this source includes the explicit read-only accepted-connections map
+and project-refinement stack. Earlier exclusions below describe their dated
+candidate only. The map does not automatically activate or write graph data.
+
+This is source integration, not release qualification. Full exact-head CI,
+archive identity/signing, applicable physical qualification and published
+artifact/feed checks remain required. No upload or distribution is claimed.
+The earlier intermittent largest-text Done-button failure remains recorded;
+an unchanged rerun passed without establishing its root cause.
+
+## November 16 combined Apple speech release preparation
+
+The shared preparation identity is now **0.14.23 (79)**. It combines the
+post-recording detail and build-78 preparation (PRs #200/#201), mobile Apple
+speech plus detail integration (PR #206, `6b2421c`), and final Mac Apple speech
+(PR #204, `025a03b`). The standalone mobile implementation in PR #205 is
+included by the reviewed integration. The only merge conflict was adjacent
+AGENTS.md guidance; both platform invariants are retained unchanged.
+
+This is a new source identity, not a qualification transfer. Run full CI on the
+combined head, then bind each signed artifact to that exact source. Native Mac
+fixture and prior mobile/simulator passes remain attributed to their original
+commits. The interrupted local integrated simulator run is not a passing result.
+
+Build 0.14.22 (78) remains a separate, processed normal-app internal beta made
+available to the existing one-tester James Only - Experimental group on
+November 16. It does not contain these Apple speech changes. Any new TestFlight
+distribution remains limited to that same owner-beta audience, with no external
+invites or App Store submission. Verify archive identity, signing, privacy,
+processing and group availability independently for build 79.
+
+Physical Apple-model availability, real capture/Stop/playback/transcription,
+paired-Host enrichment, cancellation/resource behavior and accessibility remain
+open. Existing codec selection is unchanged; exact-source PCM/EOF, authenticated
+phone-to-Host receipt/master protection and phone Library round-trip gates are
+not waived by the version bump, CI, or owner beta availability. Mac Sparkle
+publication requires the exact signed, notarized/stapled artifact and verified
+public assets/feed. No new artifact, upload or release is claimed here.
+
+## November 15 recording-detail TestFlight preparation
+
+An isolated preparation branch advances the candidate to **0.14.22 (78)** on top
+of PR #200's `35de37e1edf4eb8e8abd1e4ecb1ed04ddab7fdfe`. Build 77 was already
+uploaded and made available to the existing James-only internal group; it does
+not contain PR #200's recording-detail flow. This build-number change prepares a
+new identity, not a distribution-ready claim or a replacement Mac release.
+
+[PR #200 CI](https://github.com/jkrack/Harc/actions/runs/43679416506) passed on
+that source. Its physical synthetic app tests are not real-microphone/UI
+qualification. Real capture/Stop, paired-Host enrichment, offline reconciliation,
+spoken VoiceOver, and the remaining accessibility/error-state checks remain
+open. Archive identity, signing, source preflight, distribution processing and
+James-only group availability must be verified for build 78 itself. No earlier
+archive or test receipt can be relabeled as this candidate.
+
+Do not upload while required qualification is blocked. Do not create credentials,
+change security settings, invite other testers, or submit to App Review. Keep the
+published Mac Sparkle artifact and the user's recordings unchanged.
 
 ## November 14 internal TestFlight preparation
 
@@ -301,11 +381,11 @@ logs, result bundles, hardware/OS identity, and artifact digests together.
 
 | Gate | Current status | Required closure |
 | --- | --- | --- |
-| Candidate version/build identification | Identified only | Match source 0.14.22 (77); retain the clean source commit and exact artifact receipts. No 0.14.22 phone artifact is selected or qualified; earlier evidence retains its original identity. |
+| Candidate version/build identification | Identified only | Match source 0.14.24 (80); verify build uniqueness in App Store Connect before signing and retain exact source and artifact receipts. No 0.14.24 phone artifact is selected or qualified; earlier evidence retains its original identity. |
 | Repository input preflight | Source inputs and public URLs passed during preparation | `xcodegen generate` and source/public-URL preflight passed in the isolated readiness checkout. Repeat on the clean committed candidate and retain its exit status. This does not close the gates below. |
 | Packaged iPhone configuration/privacy assertions | Local simulator diagnostic pass, 2026-10-19 | 71 logical tests passed with zero failures or skips on iOS 27.0: 57 XCTest app cases, 12 Swift Testing cases, and two UI cases. App source was `3224c78` with the SSD test harness being edited; this is not sealed release evidence. Repeat on the sealed release artifact. |
 | Package, Mac app, embedded helpers | Historical PR #136 exact-head CI pass | Run `39177518324` passed package/protocol/relay validation, the Mac app/UI regression, helpers and mobile configuration at the tree merged as `3afdccf`. Repeat affected gates on the current candidate and retain exact release-artifact identity. Keep Mac distribution on Sparkle. |
-| Physical codec and product-path qualification | IN PROGRESS on Omega | Retain the passing physical bit-exact codec regression, then complete one real phone → Host transfer with a verified durable receipt, matching canonical hash, and no cleanup before receipt. Simulator evidence does not substitute. |
+| Physical codec and product-path qualification | UNRUN for this candidate | Run the focused physical bit-exact codec tests, then complete one real phone → Host transfer with a verified durable receipt, matching canonical hash, and no cleanup before receipt. Simulator or earlier-build evidence does not substitute. |
 | C/T/P/H capture and transfer matrix | UNRUN for this candidate | Perform the specified repetitions, durable-prefix/receipt/recovery checks, and actual phone-to-Mac-to-Library round trip. |
 | Physical UI/accessibility/protection/upgrade | All 94 app tests passed on supplementary Omega; UI runner blocked before assertions by Xcode/CoreDevice automation startup | Rerun physical UI with a compatible Xcode/device-OS pairing, then execute first launch, migrations, UI/playback/export, VoiceOver/largest text, lock/reboot, interruption, storage and remaining upgrade acceptance on an eligible physical phone under the current qualification policy. |
 | Physical two-network/direct-route/revocation | UNRUN for this candidate | Verify authenticated direct/relay lifecycle and visible revocation on actual devices/networks. |

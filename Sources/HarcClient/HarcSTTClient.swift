@@ -60,7 +60,9 @@ public struct HarcSTTClient: Sendable {
         ))
         let response = try await roundTripWithTimeout(request, seconds: Self.transcribeTimeout)
         switch response {
-        case .result(let r): return r
+        case .result(let r):
+            try Self.validateEngine(r)
+            return r
         case .error(let e): throw ClientError.transcribeFailed(code: e.code, message: e.message)
         default: throw ClientError.ipcDecodeFailed("unexpected response: \(response)")
         }
@@ -79,9 +81,20 @@ public struct HarcSTTClient: Sendable {
         ))
         let response = try await roundTripWithTimeout(request, seconds: Self.dictateTimeout)
         switch response {
-        case .result(let r): return r.text
+        case .result(let r):
+            try Self.validateEngine(r)
+            return r.text
         case .error(let e): throw ClientError.transcribeFailed(code: e.code, message: e.message)
         default: throw ClientError.ipcDecodeFailed("unexpected response: \(response)")
+        }
+    }
+
+    static func validateEngine(_ result: TranscribeResult) throws {
+        guard result.sttModelID == HarcVersion.sttEngineVersion else {
+            throw ClientError.transcribeFailed(
+                code: "speech_engine_mismatch",
+                message: "The speech helper returned a different or unverified engine. Restart Harc before retrying; audio is retained."
+            )
         }
     }
 

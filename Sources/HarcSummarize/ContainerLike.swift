@@ -22,12 +22,29 @@ public protocol ContainerLike: Sendable {
         maxTokens: Int,
         onStats: (@Sendable (GenerationStats) -> Void)?
     ) async throws -> String
+    /// Fail-closed evidence capability; implementations must prepare once and
+    /// enforce the full templated token budget before starting generation.
+    func generateEvidence(promptBody: String, budget: EvidenceGenerationBudget) async throws -> String
+    /// Separate trusted policy from selected-source data. Unsupported by default;
+    /// implementations must not concatenate roles or silently fall back.
+    func generateEvidence(systemPrompt: String, sourceJSON: String,
+                          budget: EvidenceGenerationBudget) async throws -> String
+
     func generateSummary(promptBody: String, maxTokens: Int,
                          onStats: (@Sendable (GenerationStats) -> Void)?) async throws -> String
 
 }
 
 public extension ContainerLike {
+    func generateEvidence(systemPrompt: String, sourceJSON: String,
+                          budget: EvidenceGenerationBudget) async throws -> String {
+        throw EvidenceGenerationError.unsupported
+    }
+
+    func generateEvidence(promptBody: String, budget: EvidenceGenerationBudget) async throws -> String {
+        throw EvidenceGenerationError.unsupported
+    }
+
     func generateSummary(promptBody: String, maxTokens: Int,
                          onStats: (@Sendable (GenerationStats) -> Void)?) async throws -> String {
         try await generate(promptBody: promptBody, systemPrompt: nil, maxTokens: maxTokens, onStats: onStats)
@@ -54,9 +71,17 @@ public extension ContainerLike {
 /// chunks into one string.
 public struct MLXModelContainer: ContainerLike {
     private let container: ModelContainer
+    private let evidenceObserver: (@Sendable (Int, Int, String) -> Void)?
 
     public init(container: ModelContainer) {
         self.container = container
+        self.evidenceObserver = nil
+    }
+
+    // Internal diagnostic observer: numeric completion metadata only, no text.
+    init(container: ModelContainer, evidenceObserver: @escaping @Sendable (Int, Int, String) -> Void) {
+        self.container = container
+        self.evidenceObserver = evidenceObserver
     }
 
     public func generate(
@@ -73,6 +98,56 @@ public struct MLXModelContainer: ContainerLike {
                                 onStats: (@Sendable (GenerationStats) -> Void)?) async throws -> String {
         try await generateConfigured(promptBody: promptBody, systemPrompt: nil,
             maxTokens: maxTokens, onStats: onStats, temperature: 0)
+    }
+
+    public func generateEvidence(promptBody: String, budget: EvidenceGenerationBudget) async throws -> String {
+        try await generateEvidenceMessages(EvidenceRoleMessages.legacy(promptBody), budget: budget)
+    }
+
+    public func generateEvidence(systemPrompt: String, sourceJSON: String,
+                                 budget: EvidenceGenerationBudget) async throws -> String {
+        try await generateEvidenceMessages(EvidenceRoleMessages.separated(systemPrompt: systemPrompt,
+            sourceJSON: sourceJSON), budget: budget)
+    }
+
+    private func generateEvidenceMessages(_ messages: [[String: String]],
+                                          budget: EvidenceGenerationBudget) async throws -> String {
+        try Task.checkCancellation()
+        // BOTH roles and the template are prepared ONCE and counted together.
+        let input = UserInput(messages: messages.map { $0.mapValues { $0 as any Sendable } },
+                              additionalContext: ["enable_thinking": false])
+        let prepared = try await container.prepare(input: input)
+        let promptTokenCount = prepared.text.tokens.size
+        try budget.validate(promptTokens: promptTokenCount)
+        try Task.checkCancellation()
+        var parameters = GenerateParameters()
+        parameters.maxTokens = budget.outputReserve
+        parameters.temperature = 0
+        // Generate the SAME prepared input whose actual templated tokens were counted.
+        let configuredParameters = parameters
+        let (stream, producer) = try await container.perform(nonSendable: prepared) { context, input in
+            let iterator = try TokenIterator(input: input, model: context.model, parameters: configuredParameters)
+            return MLXLMCommon.generateTask(promptTokenCount: input.text.tokens.size,
+                modelConfiguration: context.configuration, tokenizer: context.tokenizer, iterator: iterator)
+        }
+        return try await withEvidenceProducerCleanup(producer) {
+            var result = EvidenceGenerationCollector()
+            for await event in stream {
+                try Task.checkCancellation()
+                switch event {
+                case .chunk(let fragment): try result.append(fragment)
+                case .info(let info):
+                    evidenceObserver?(promptTokenCount, info.generationTokenCount, String(describing: info.stopReason))
+                    switch info.stopReason {
+                    case .stop: try result.complete(normally: true)
+                    case .length, .cancelled: throw EvidenceGenerationError.invalidCompletion
+                    }
+                case .toolCall: throw EvidenceGenerationError.invalidCompletion
+                }
+            }
+            try Task.checkCancellation()
+            return try result.finish()
+        }
     }
 
     private func generateConfigured(promptBody: String, systemPrompt: String?, maxTokens: Int,

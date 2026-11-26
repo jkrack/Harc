@@ -855,6 +855,7 @@ extension DatabaseMigrator {
                 BEGIN DELETE FROM host_speaker_review_queue WHERE recording_id = NEW.recording_id; END;
                 """)
         }
+        registerProjectRefinementMigration(&migrator)
         return migrator
     }
 }

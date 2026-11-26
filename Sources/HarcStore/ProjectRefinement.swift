@@ -1,0 +1,598 @@
+import Foundation
+import CryptoKit
+import GRDB
+import HarcDomain
+
+/// Local-only derived knowledge. These types are not Host RPC authority or DTOs.
+public struct KnowledgeProject: Codable, Equatable, Sendable, Identifiable {
+    public let id: UUID
+    public let name: String
+    public let version: UUID
+    /// Owner-authored context only; never silently populated by model output.
+    public let brief: String?
+
+    public init(id: UUID, name: String, version: UUID, brief: String? = nil) {
+        self.id = id; self.name = name; self.version = version; self.brief = brief
+    }
+}
+
+public enum ProjectReviewDecision: String, Codable, Sendable {
+    case pending, accepted, rejected, unsure
+}
+
+/// Evidence is a verbatim excerpt, not an assertion that the inferred link is true.
+/// No seek timestamp is supplied until the caller has qualified timing provenance.
+public struct ProjectMatchReview: Codable, Equatable, Sendable, Identifiable {
+    public let id: UUID
+    public let recordingID: Int64
+    public let canonicalID: CanonicalRecordingID
+    public let project: KnowledgeProject
+    public let recordingRevision: EntityRevision
+    public let transcriptSHA256: String
+    public let quote: String
+    public let generatorID: String
+    public var decision: ProjectReviewDecision
+    public var version: UUID
+}
+
+/// A human assignment survives retranscription, but its original supporting
+/// evidence must be visibly marked stale rather than presented as current proof.
+public struct ConfirmedProjectMatch: Sendable, Equatable {
+    public let review: ProjectMatchReview
+    public let evidenceIsCurrent: Bool
+}
+
+public struct ProjectReviewReceipt: Codable, Equatable, Sendable {
+    public let operationID: UUID
+    public let reviewID: UUID
+    public let decision: ProjectReviewDecision
+    /// Actual newly linked distinct recordings in this transaction (0 or 1).
+    /// This is not a model-quality, precision or predicted-reach measurement.
+    public let newlyLinkedRecordings: Int
+}
+
+public struct ProjectReviewApplication: Sendable {
+    public let receipt: ProjectReviewReceipt
+    public let didApply: Bool
+}
+
+public struct ProjectReviewCard: Sendable, Identifiable {
+    public var id: UUID { review.id }
+    public let review: ProjectMatchReview
+    public let recordingTitle: String
+    public let projectName: String
+    public let sourceContext: String?
+    public let evidenceIsCurrent: Bool
+}
+
+public struct ProjectReviewHistoryItem: Sendable {
+    public let receipt: ProjectReviewReceipt
+    public let projectName: String
+    public let recordingTitle: String
+    public let undone: Bool
+    public let canUndo: Bool
+}
+
+public enum ProjectRefinementError: Error, Equatable {
+    case missing, invalidEvidence, staleEvidence, conflict, operationMismatch, hostUnavailable
+}
+
+private struct ProjectReviewEvent: Codable {
+    let before: ProjectMatchReview
+    let after: ProjectMatchReview
+    let receipt: ProjectReviewReceipt
+}
+
+func transcriptDigest(_ text: String) -> String {
+    SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+}
+
+extension DatabaseMigrator {
+    static func registerProjectRefinementMigration(_ migrator: inout DatabaseMigrator) {
+        migrator.registerMigration("v34_project_refinement") { db in
+            try db.execute(sql: """
+                CREATE TABLE knowledge_projects (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    payload BLOB NOT NULL
+                );
+                CREATE TABLE project_match_reviews (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    recording_id INTEGER NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
+                    project_id TEXT NOT NULL REFERENCES knowledge_projects(id) ON DELETE CASCADE,
+                    payload BLOB NOT NULL,
+                    UNIQUE(recording_id, project_id)
+                );
+                CREATE TABLE project_review_events (
+                    operation_id TEXT PRIMARY KEY NOT NULL,
+                    review_id TEXT NOT NULL REFERENCES project_match_reviews(id) ON DELETE CASCADE,
+                    payload BLOB NOT NULL,
+                    undone INTEGER NOT NULL DEFAULT 0 CHECK(undone IN (0, 1))
+                );
+                """)
+        }
+        migrator.registerMigration("v35_project_review_queue_index") { db in
+            try db.execute(sql: """
+                CREATE INDEX project_match_review_decision ON project_match_reviews(
+                    json_extract(CAST(payload AS TEXT), '$.decision'), id
+                )
+                """)
+        }
+    }
+}
+
+// Additional UI session binding, on top of StoreDatabaseAccess's live writer
+// lease validation. A former Host becoming standalone must not retain UI writes.
+func validateProjectReviewHost(_ db: Database, expected: LibraryMetadata?) throws {
+    guard let expected else { return }
+    let current = try RecordingStore.readLibraryMetadata(in: db)
+    guard expected.writerMode == .host, current.writerMode == .host,
+          expected.libraryID == current.libraryID,
+          expected.hostAuthorityID == current.hostAuthorityID,
+          expected.hostStateID == current.hostStateID else {
+        throw ProjectRefinementError.hostUnavailable
+    }
+}
+
+private func loadReview(_ db: Database, id: UUID) throws -> ProjectMatchReview {
+    guard let data = try Data.fetchOne(db, sql: "SELECT payload FROM project_match_reviews WHERE id = ?", arguments: [id.uuidString]) else {
+        throw ProjectRefinementError.missing
+    }
+    return try JSONDecoder().decode(ProjectMatchReview.self, from: data)
+}
+
+private func saveReview(_ db: Database, review: ProjectMatchReview) throws {
+    try db.execute(sql: "UPDATE project_match_reviews SET payload = ? WHERE id = ?",
+                   arguments: [try JSONEncoder().encode(review), review.id.uuidString])
+}
+
+private func validateEvidence(_ db: Database, review: ProjectMatchReview) throws {
+    guard let recording = try Recording.fetchOne(db, key: review.recordingID),
+          recording.deletedAt == nil,
+          let projectData = try Data.fetchOne(db, sql: "SELECT payload FROM knowledge_projects WHERE id = ?", arguments: [review.project.id.uuidString]) else {
+        throw ProjectRefinementError.missing
+    }
+    let project = try JSONDecoder().decode(KnowledgeProject.self, from: projectData)
+    guard recording.canonicalID == review.canonicalID,
+          project.id == review.project.id, project.version == review.project.version,
+          let text = recording.transcriptText,
+          transcriptDigest(text) == review.transcriptSHA256,
+          !review.quote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+          text.contains(review.quote) else { throw ProjectRefinementError.staleEvidence }
+}
+
+public extension RecordingStore {
+    func createKnowledgeProject(name: String, id: UUID = UUID(), expectedHost: LibraryMetadata? = nil) async throws -> KnowledgeProject {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { throw ProjectRefinementError.invalidEvidence }
+        let project = KnowledgeProject(id: id, name: name, version: UUID())
+        return try await db.write { database in
+            try validateProjectReviewHost(database, expected: expectedHost)
+            try database.execute(sql: "INSERT INTO knowledge_projects(id, payload) VALUES (?, ?)",
+                                 arguments: [id.uuidString, try JSONEncoder().encode(project)])
+            return project
+        }
+    }
+
+    /// Regeneration never overwrites human decisions, including unsure. A stale
+    /// pending suggestion must be refreshed explicitly, not silently rebound.
+    func proposeProjectMatch(recordingID: Int64, projectID: UUID, quote: String, generatorID: String) async throws -> ProjectMatchReview {
+        guard !quote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !generatorID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ProjectRefinementError.invalidEvidence
+        }
+        return try await db.write { database in
+            guard let activeRecording = try Recording.fetchOne(database, key: recordingID),
+                  activeRecording.deletedAt == nil else { throw ProjectRefinementError.missing }
+            if let data = try Data.fetchOne(database, sql: "SELECT payload FROM project_match_reviews WHERE recording_id = ? AND project_id = ?", arguments: [recordingID, projectID.uuidString]) {
+                return try JSONDecoder().decode(ProjectMatchReview.self, from: data)
+            }
+            guard let recording = try Recording.fetchOne(database, key: recordingID),
+                  let data = try Data.fetchOne(database, sql: "SELECT payload FROM knowledge_projects WHERE id = ?", arguments: [projectID.uuidString]) else { throw ProjectRefinementError.missing }
+            guard let transcript = recording.transcriptText, transcript.contains(quote) else { throw ProjectRefinementError.invalidEvidence }
+            let project = try JSONDecoder().decode(KnowledgeProject.self, from: data)
+            let review = ProjectMatchReview(id: UUID(), recordingID: recordingID, canonicalID: recording.canonicalID,
+                project: project, recordingRevision: recording.revision, transcriptSHA256: transcriptDigest(transcript),
+                quote: quote, generatorID: generatorID, decision: .pending, version: UUID())
+            try database.execute(sql: "INSERT INTO project_match_reviews(id, recording_id, project_id, payload) VALUES (?, ?, ?, ?)",
+                arguments: [review.id.uuidString, recordingID, projectID.uuidString, try JSONEncoder().encode(review)])
+            return review
+        }
+    }
+
+    /// Historical decisions remain inspectable after evidence becomes stale.
+    func projectMatchReview(id: UUID) async throws -> ProjectMatchReview {
+        try await db.read { database in
+            let review = try loadReview(database, id: id)
+            guard let recording = try Recording.fetchOne(database, key: review.recordingID),
+                  recording.deletedAt == nil else { throw ProjectRefinementError.missing }
+            return review
+        }
+    }
+
+    /// Human assignments remain intact across transcript updates. The caller
+    /// must distinguish a retained assignment from current supporting evidence.
+    /// Trashed recordings are never projected.
+    func confirmedProjectMatches(recordingID: Int64) async throws -> [ConfirmedProjectMatch] {
+        try await db.read { database in
+            guard let recording = try Recording.fetchOne(database, key: recordingID),
+                  recording.deletedAt == nil else { return [] }
+            let data = try Data.fetchAll(database, sql: "SELECT payload FROM project_match_reviews WHERE recording_id = ? ORDER BY id", arguments: [recordingID])
+            return try data.compactMap { data in
+                let review = try JSONDecoder().decode(ProjectMatchReview.self, from: data)
+                guard review.decision == .accepted, recording.canonicalID == review.canonicalID else { return nil }
+                var current = true
+                do { try validateEvidence(database, review: review) }
+                catch ProjectRefinementError.staleEvidence { current = false }
+                return ConfirmedProjectMatch(review: review, evidenceIsCurrent: current)
+            }
+        }
+    }
+
+    /// Bounded local review snapshot. Never returns trashed recordings or
+    /// resolved/unsure decisions. No filesystem reads or inferred timestamps.
+    func pendingProjectReviewCards(limit: Int = 3, deferred: Bool = false, afterReviewID: UUID? = nil) async throws -> [ProjectReviewCard] {
+        let limit = min(max(limit, 1), 20)
+        return try await db.read { database in
+            let data = try Data.fetchAll(database, sql: """
+                SELECT m.payload FROM project_match_reviews m
+                JOIN recordings r ON r.id = m.recording_id
+                WHERE r.deleted_at IS NULL AND json_extract(CAST(m.payload AS TEXT), '$.decision') = ?
+                AND (? IS NULL OR m.id > ?)
+                ORDER BY m.id LIMIT ?
+                """, arguments: [deferred ? "unsure" : "pending", afterReviewID?.uuidString, afterReviewID?.uuidString, limit])
+            return try data.map { data in
+                let review = try JSONDecoder().decode(ProjectMatchReview.self, from: data)
+                guard let recording = try Recording.fetchOne(database, key: review.recordingID),
+                      let projectData = try Data.fetchOne(database, sql: "SELECT payload FROM knowledge_projects WHERE id = ?", arguments: [review.project.id.uuidString]) else { throw ProjectRefinementError.missing }
+                let project = try JSONDecoder().decode(KnowledgeProject.self, from: projectData)
+                var current = true
+                do { try validateEvidence(database, review: review) }
+                catch ProjectRefinementError.staleEvidence { current = false }
+                let context: String?
+                if let text = recording.transcriptText, let range = text.range(of: review.quote) {
+                    let start = text.index(range.lowerBound, offsetBy: -160, limitedBy: text.startIndex) ?? text.startIndex
+                    let end = text.index(range.upperBound, offsetBy: 160, limitedBy: text.endIndex) ?? text.endIndex
+                    context = String(text[start..<end])
+                } else { context = nil }
+                return ProjectReviewCard(review: review, recordingTitle: recording.title ?? "Untitled recording",
+                    projectName: project.name, sourceContext: context, evidenceIsCurrent: current)
+            }
+        }
+    }
+
+    /// Explicitly reopens a pending or set-aside hypothesis when its original verbatim
+    /// quote still exists. It cannot manufacture new supporting text or erase a
+    /// accepted/rejected answer. Prior set-aside event history remains intact.
+    /// The caller must display the refreshed card before acceptance.
+    func refreshPendingProjectReview(id: UUID, expectedVersion: UUID, expectedHost: LibraryMetadata? = nil) async throws {
+        try await db.write { database in
+            try validateProjectReviewHost(database, expected: expectedHost)
+            let old = try loadReview(database, id: id)
+            guard old.version == expectedVersion, old.decision == .pending || old.decision == .unsure else { throw ProjectRefinementError.conflict }
+            guard let recording = try Recording.fetchOne(database, key: old.recordingID), recording.deletedAt == nil,
+                  recording.canonicalID == old.canonicalID,
+                  let text = recording.transcriptText, text.contains(old.quote),
+                  let data = try Data.fetchOne(database, sql: "SELECT payload FROM knowledge_projects WHERE id = ?", arguments: [old.project.id.uuidString]) else { throw ProjectRefinementError.invalidEvidence }
+            let project = try JSONDecoder().decode(KnowledgeProject.self, from: data)
+            let updated = ProjectMatchReview(id: old.id, recordingID: old.recordingID, canonicalID: old.canonicalID,
+                project: project, recordingRevision: recording.revision, transcriptSHA256: transcriptDigest(text),
+                quote: old.quote, generatorID: old.generatorID, decision: .pending, version: UUID())
+            try saveReview(database, review: updated)
+        }
+    }
+
+    /// Durable undo-history presentation. Deleted/trashed sources remain hidden.
+    /// The newest 20 events are bounded; old conflicting events are inspectable
+    /// but never offered as undoable. This does not replay committed effects.
+    func recentProjectReviewHistory(limit: Int = 20) async throws -> [ProjectReviewHistoryItem] {
+        try await db.read { database in
+            let rows = try Row.fetchAll(database, sql: """
+                SELECT e.payload AS event_payload, e.undone AS undone, m.payload AS review_payload,
+                       p.payload AS project_payload, r.title AS recording_title, r.canonical_uuid AS canonical_uuid
+                FROM project_review_events e JOIN project_match_reviews m ON m.id = e.review_id
+                JOIN recordings r ON r.id = m.recording_id
+                JOIN knowledge_projects p ON p.id = m.project_id
+                WHERE r.deleted_at IS NULL ORDER BY e.rowid DESC LIMIT ?
+                """, arguments: [min(max(limit, 1), 100)])
+            return try rows.map { row in
+                let event = try JSONDecoder().decode(ProjectReviewEvent.self, from: row["event_payload"] as Data)
+                let review = try JSONDecoder().decode(ProjectMatchReview.self, from: row["review_payload"] as Data)
+                let project = try JSONDecoder().decode(KnowledgeProject.self, from: row["project_payload"] as Data)
+                let undone = (row["undone"] as Int) == 1
+                return ProjectReviewHistoryItem(receipt: event.receipt, projectName: project.name,
+                    recordingTitle: (row["recording_title"] as String?) ?? "Untitled recording", undone: undone,
+                    canUndo: !undone && review.version == event.after.version)
+            }
+        }
+    }
+
+    /// The UI retains one operation ID per tap intent. Replays return the same
+    /// receipt; they never reapply an undone or superseded decision.
+    func decideProjectMatch(id: UUID, expectedVersion: UUID, decision: ProjectReviewDecision, operationID: UUID) async throws -> ProjectReviewReceipt {
+        try await applyProjectMatchDecision(id: id, expectedVersion: expectedVersion, decision: decision, operationID: operationID).receipt
+    }
+
+    func applyProjectMatchDecision(id: UUID, expectedVersion: UUID, decision: ProjectReviewDecision, operationID: UUID, expectedHost: LibraryMetadata? = nil) async throws -> ProjectReviewApplication {
+        guard decision != .pending else { throw ProjectRefinementError.invalidEvidence }
+        return try await db.write { database in
+            try validateProjectReviewHost(database, expected: expectedHost)
+            if let data = try Data.fetchOne(database, sql: "SELECT payload FROM project_review_events WHERE operation_id = ?", arguments: [operationID.uuidString]) {
+                let event = try JSONDecoder().decode(ProjectReviewEvent.self, from: data)
+                guard event.before.id == id, event.before.version == expectedVersion, event.after.decision == decision else { throw ProjectRefinementError.operationMismatch }
+                return ProjectReviewApplication(receipt: event.receipt, didApply: false)
+            }
+            let before = try loadReview(database, id: id)
+            guard before.version == expectedVersion else { throw ProjectRefinementError.conflict }
+            guard let recording = try Recording.fetchOne(database, key: before.recordingID),
+                  recording.deletedAt == nil, recording.canonicalID == before.canonicalID else { throw ProjectRefinementError.missing }
+            // Reject/unsure may dismiss the original stale hypothesis. Accept
+            // must still prove that the evidence shown is current.
+            if decision == .accepted { try validateEvidence(database, review: before) }
+            var after = before
+            after.decision = decision
+            after.version = UUID()
+            let receipt = ProjectReviewReceipt(operationID: operationID, reviewID: id, decision: decision,
+                newlyLinkedRecordings: decision == .accepted && before.decision != .accepted ? 1 : 0)
+            try saveReview(database, review: after)
+            let event = ProjectReviewEvent(before: before, after: after, receipt: receipt)
+            try database.execute(sql: "INSERT INTO project_review_events(operation_id, review_id, payload) VALUES (?, ?, ?)",
+                arguments: [operationID.uuidString, id.uuidString, try JSONEncoder().encode(event)])
+            return ProjectReviewApplication(receipt: receipt, didApply: true)
+        }
+    }
+
+    /// Returns the number of links actually removed (0 or 1). A later decision
+    /// prevents undo rather than being overwritten. A fresh version prevents ABA.
+    func undoProjectMatch(operationID: UUID, expectedHost: LibraryMetadata? = nil) async throws -> Int {
+        try await db.write { database in
+            try validateProjectReviewHost(database, expected: expectedHost)
+            guard let row = try Row.fetchOne(database, sql: "SELECT payload, undone FROM project_review_events WHERE operation_id = ?", arguments: [operationID.uuidString]) else { throw ProjectRefinementError.missing }
+            let undone: Int = row["undone"]
+            if undone == 1 { return 0 }
+            let data: Data = row["payload"]
+            let event = try JSONDecoder().decode(ProjectReviewEvent.self, from: data)
+            let current = try loadReview(database, id: event.after.id)
+            guard current.version == event.after.version else { throw ProjectRefinementError.conflict }
+            guard let recording = try Recording.fetchOne(database, key: current.recordingID),
+                  recording.deletedAt == nil, recording.canonicalID == current.canonicalID else { throw ProjectRefinementError.missing }
+            // Restore the human assignment, not the freshness of its evidence.
+            let currentLinkWasProjected = current.decision == .accepted
+            var restored = event.before
+            restored.version = UUID()
+            try saveReview(database, review: restored)
+            try database.execute(sql: "UPDATE project_review_events SET undone = 1 WHERE operation_id = ?", arguments: [operationID.uuidString])
+            return currentLinkWasProjected && restored.decision != .accepted ? 1 : 0
+        }
+    }
+}
+
+/// Immutable, bounded candidates from explicitly selected sources. Only Store
+/// can construct these; callers cannot substitute evidence or Host identity.
+public struct ProjectMentionProposalBatch: Sendable {
+    fileprivate let host: LibraryMetadata
+    fileprivate let reviews: [ProjectMatchReview]
+    public var candidateCount: Int { reviews.count }
+    public let selectedCount: Int
+    public let oversizedCount: Int
+    public let unavailableCount: Int
+    public let noMatchCount: Int
+}
+
+public struct ProjectMentionProposalResult: Sendable, Equatable {
+    public let inserted: Int
+    public let existing: Int
+    public let stale: Int
+}
+
+public extension RecordingStore {
+    /// Opt-in producer for an existing project and at most 25 caller-selected
+    /// recordings. A name mention is a hypothesis, not semantic relevance or an
+    /// assignment. No aliases, confidence scores, remote inference or auto-link.
+    func prepareProjectMentionProposals(recordingIDs: [Int64], projectID: UUID,
+                                        expectedHost: LibraryMetadata,
+                                        expectedCanonicalIDs: [Int64: CanonicalRecordingID] = [:],
+                                        expectedProjectVersion: UUID? = nil) async throws -> ProjectMentionProposalBatch {
+        guard !recordingIDs.isEmpty, recordingIDs.count <= 25 else {
+            throw ProjectRefinementError.invalidEvidence
+        }
+        try Task.checkCancellation()
+        return try await db.read { database in
+            try validateProjectReviewHost(database, expected: expectedHost)
+            guard let payload = try Data.fetchOne(database,
+                sql: "SELECT payload FROM knowledge_projects WHERE id = ?", arguments: [projectID.uuidString]) else {
+                throw ProjectRefinementError.missing
+            }
+            let project = try JSONDecoder().decode(KnowledgeProject.self, from: payload)
+            if let expectedProjectVersion, expectedProjectVersion != project.version {
+                throw ProjectRefinementError.staleEvidence
+            }
+            // Literal, case-sensitive matching with Unicode word boundaries;
+            // never match Harc inside Harcourt, nor invent semantic confidence.
+            guard project.name.count >= 3, project.name.count <= 120 else {
+                throw ProjectRefinementError.invalidEvidence
+            }
+            let pattern = "(?<![\\p{L}\\p{N}\\p{M}_])" + NSRegularExpression.escapedPattern(for: project.name)
+                + "(?![\\p{L}\\p{N}\\p{M}_])"
+            let matcher = try NSRegularExpression(pattern: pattern)
+            var candidates: [ProjectMatchReview] = []
+            var oversized = 0, unavailable = 0, noMatch = 0
+            for id in Set(recordingIDs).sorted() {
+                try Task.checkCancellation()
+                guard let size = try Int.fetchOne(database,
+                    sql: "SELECT length(CAST(transcript_text AS BLOB)) FROM recordings WHERE id = ? AND deleted_at IS NULL", arguments: [id]) else {
+                    unavailable += 1; continue
+                }
+                guard size <= 256_000 else { oversized += 1; continue }
+                guard let recording = try Recording.fetchOne(database, key: id), recording.deletedAt == nil else {
+                    unavailable += 1; continue
+                }
+                if let expected = expectedCanonicalIDs[id], expected != recording.canonicalID {
+                    unavailable += 1; continue
+                }
+                guard let text = recording.transcriptText,
+                      let match = matcher.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+                      let range = Range(match.range, in: text) else { noMatch += 1; continue }
+                // Bounded verbatim surrounding evidence retains negation and
+                // quotation context; it never asserts the connection is true.
+                let start = text.index(range.lowerBound, offsetBy: -160, limitedBy: text.startIndex) ?? text.startIndex
+                let end = text.index(range.upperBound, offsetBy: 160, limitedBy: text.endIndex) ?? text.endIndex
+                candidates.append(ProjectMatchReview(id: UUID(), recordingID: id, canonicalID: recording.canonicalID,
+                    project: project, recordingRevision: recording.revision, transcriptSHA256: transcriptDigest(text),
+                    quote: String(text[start..<end]), generatorID: "literal-project-name-v1", decision: .pending, version: UUID()))
+            }
+            return ProjectMentionProposalBatch(host: expectedHost, reviews: candidates,
+                selectedCount: Set(recordingIDs).count, oversizedCount: oversized,
+                unavailableCount: unavailable, noMatchCount: noMatch)
+        }
+    }
+
+    /// Atomic source/Host revalidation prevents a changed context that happens
+    /// to retain the quote being silently rebound. Existing human decisions,
+    /// including rejected and unsure, are never overwritten or resurfaced.
+    func commitProjectMentionProposals(_ batch: ProjectMentionProposalBatch) async throws -> ProjectMentionProposalResult {
+        try await commitProjectMentionProposals(batch, beforeInsert: { _ in })
+    }
+}
+
+// Internal deterministic transaction hook supports cancellation/rollback tests.
+// It is not exposed to app callers.
+extension RecordingStore {
+    func commitProjectMentionProposals(_ batch: ProjectMentionProposalBatch,
+        beforeInsert: @escaping @Sendable (Int) -> Void) async throws -> ProjectMentionProposalResult {
+        try Task.checkCancellation()
+        let cancellation = ProjectProposalCancellation()
+        return try await withTaskCancellationHandler {
+          try await db.write { database in
+            try cancellation.check()
+            try validateProjectReviewHost(database, expected: batch.host)
+            var inserted = 0, existing = 0, stale = 0
+            for review in batch.reviews {
+                try cancellation.check()
+                guard let size = try Int.fetchOne(database,
+                    sql: "SELECT length(CAST(transcript_text AS BLOB)) FROM recordings WHERE id = ? AND deleted_at IS NULL", arguments: [review.recordingID]), size <= 256_000 else {
+                    stale += 1; continue
+                }
+                do { try validateEvidence(database, review: review) }
+                catch ProjectRefinementError.staleEvidence { stale += 1; continue }
+                catch ProjectRefinementError.missing { stale += 1; continue }
+                if try Bool.fetchOne(database, sql: "SELECT EXISTS(SELECT 1 FROM project_match_reviews WHERE recording_id = ? AND project_id = ?)",
+                                     arguments: [review.recordingID, review.project.id.uuidString]) == true {
+                    existing += 1; continue
+                }
+                beforeInsert(inserted)
+                try cancellation.check()
+                try database.execute(sql: "INSERT INTO project_match_reviews(id, recording_id, project_id, payload) VALUES (?, ?, ?, ?)",
+                    arguments: [review.id.uuidString, review.recordingID, review.project.id.uuidString, try JSONEncoder().encode(review)])
+                inserted += 1
+            }
+            try cancellation.check()
+            return ProjectMentionProposalResult(inserted: inserted, existing: existing, stale: stale)
+          }
+        } onCancel: { cancellation.cancel() }
+    }
+}
+
+private final class ProjectProposalCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+    func check() throws {
+        lock.lock(); let value = cancelled; lock.unlock()
+        if value { throw CancellationError() }
+    }
+}
+
+public extension RecordingStore {
+    /// Bounded project chooser; this reads names only, never recording content.
+    func knowledgeProjectsForReview(expectedHost: LibraryMetadata) async throws -> [KnowledgeProject] {
+        try await db.read { database in
+            try validateProjectReviewHost(database, expected: expectedHost)
+            return try Data.fetchAll(database, sql: "SELECT payload FROM knowledge_projects ORDER BY id LIMIT 100")
+                .map { try JSONDecoder().decode(KnowledgeProject.self, from: $0) }
+        }
+    }
+}
+
+
+/// Immutable, bounded view of accepted associations for one selected recording.
+/// This is a point-in-time read, not live authority or a factual knowledge claim.
+public struct ConfirmedProjectMapSnapshot: Sendable {
+    public struct Connection: Identifiable, Sendable {
+        public let id: UUID
+        public let projectName: String
+        public let originalQuote: String
+        public let evidenceIsCurrent: Bool
+    }
+    public let recordingID: Int64
+    public let canonicalID: CanonicalRecordingID
+    public let recordingTitle: String
+    public let connections: [Connection]
+    public let hasMore: Bool
+}
+
+public extension RecordingStore {
+    /// No scan, inference, graph mutation, filesystem access, or mirror fallback.
+    /// Caller must invalidate this snapshot on selection/Host/Store changes before
+    /// hosting it in production. Empty means no accepted links in this snapshot,
+    /// not no possible semantic relationship.
+    func confirmedProjectMap(recordingID: Int64, canonicalID: CanonicalRecordingID,
+                             expectedHost: LibraryMetadata, limit: Int = 20) async throws -> ConfirmedProjectMapSnapshot {
+        let boundedLimit = min(max(limit, 1), 50)
+        return try await db.read { database in
+            try validateProjectReviewHost(database, expected: expectedHost)
+            guard let recording = try Recording.fetchOne(database, key: recordingID),
+                  recording.deletedAt == nil, recording.canonicalID == canonicalID else {
+                throw ProjectRefinementError.missing
+            }
+            let rows = try Row.fetchAll(database, sql: """
+                SELECT m.id AS review_id, m.project_id AS project_id,
+                       m.payload AS review_payload, p.payload AS project_payload
+                FROM project_match_reviews m
+                JOIN knowledge_projects p ON p.id = m.project_id
+                WHERE m.recording_id = ?
+                  AND json_extract(CAST(m.payload AS TEXT), '$.decision') = 'accepted'
+                ORDER BY m.id LIMIT ?
+                """, arguments: [recordingID, boundedLimit + 1])
+            // Hash the selected transcript once, not once per displayed edge.
+            let sourceDigest = recording.transcriptText.map(transcriptDigest)
+            var connections: [ConfirmedProjectMapSnapshot.Connection] = []
+            for row in rows {
+                let review = try JSONDecoder().decode(ProjectMatchReview.self, from: row["review_payload"] as Data)
+                let project = try JSONDecoder().decode(KnowledgeProject.self, from: row["project_payload"] as Data)
+                guard review.id.uuidString == row["review_id"] as String,
+                      project.id.uuidString == row["project_id"] as String,
+                      review.project.id == project.id, review.recordingID == recordingID,
+                      review.canonicalID == canonicalID, review.decision == .accepted else {
+                    throw ProjectRefinementError.invalidEvidence
+                }
+                let current = project.version == review.project.version
+                    && sourceDigest == review.transcriptSHA256
+                    && !review.quote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    && recording.transcriptText?.contains(review.quote) == true
+                connections.append(.init(id: review.id, projectName: project.name,
+                    originalQuote: review.quote, evidenceIsCurrent: current))
+            }
+            return ConfirmedProjectMapSnapshot(recordingID: recordingID, canonicalID: canonicalID,
+                recordingTitle: recording.displayTitle, connections: Array(connections.prefix(boundedLimit)),
+                hasMore: connections.count > boundedLimit)
+        }
+    }
+}
+
+public extension RecordingStore {
+    /// Register before reading; tracks all dependencies, including newly accepted
+    /// reviews. Region observation returns a signal, never source content.
+    func observeConfirmedProjectMapChanges(recordingID: Int64) -> ProjectPreviewChangeObservation {
+        let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let observation = DatabaseRegionObservation(tracking:
+            SQLRequest<Row>(sql: "SELECT * FROM recordings WHERE id = ?", arguments: [recordingID]),
+            SQLRequest<Row>(sql: "SELECT * FROM project_match_reviews WHERE recording_id = ?", arguments: [recordingID]),
+            SQLRequest<Row>(sql: "SELECT p.payload FROM knowledge_projects p JOIN project_match_reviews m ON m.project_id = p.id WHERE m.recording_id = ?", arguments: [recordingID]),
+            SQLRequest<Row>(sql: "SELECT library_uuid, writer_mode, host_authority_id, host_state_uuid FROM library_metadata WHERE id = 1"))
+        nonisolated(unsafe) let cancellable = observation.start(in: uncoordinatedDB,
+            onError: { _ in continuation.yield(()); continuation.finish() },
+            onChange: { _ in continuation.yield(()); continuation.finish() })
+        continuation.onTermination = { _ in cancellable.cancel() }
+        return ProjectPreviewChangeObservation(changes: stream, cancel: { cancellable.cancel(); continuation.finish() })
+    }
+}

@@ -3,22 +3,17 @@ import Foundation
 import FluidAudio
 import HarcCore
 
-/// Wraps FluidAudio's ASR pipeline (Parakeet TDT v2 — English-only, per the
-/// product constraint) for CoreML inference on ANE/Metal, with an optional
-/// VAD pre-filter that strips silent regions and remaps Parakeet's
-/// timestamps back to the original chunk timeline.
-///
-/// An experimental **Parakeet Unified EN** engine (`.unified`) is available
-/// opt-in via `harc-stt --asr-engine unified`. The spike verdict (see
-/// docs/dictation-plan.md): FluidAudio's `StreamingUnifiedAsrManager`
-/// exposes `consumeWordTimings()` — word-level start/end on the global
-/// timeline — so diarization alignment and per-word export keep working.
-/// v2 stays the default until Unified has long-form mileage.
+/// Native Apple on-device transcription by default. Legacy Parakeet engines
+/// remain explicit opt-ins only; unavailable Apple assets never trigger fallback.
+/// Apple reads the original chunk timeline without VAD compaction so timed words
+/// continue to align with independent FluidAudio diarization and saved audio.
 public actor Transcriber {
     /// Which ASR engine this daemon runs. Selected at spawn; not
     /// switchable per-request (each engine holds multi-hundred-MB models).
     public enum ASREngine: String, Sendable, Equatable {
-        /// Parakeet TDT 0.6B v2 — the shipped default.
+        /// Apple SpeechTranscriber; on-device, OS-managed English assets.
+        case apple
+        /// Legacy Parakeet TDT 0.6B v2, explicit opt-in.
         case v2
         /// Parakeet Unified EN 0.6B via the streaming manager (experimental).
         case unified
@@ -40,6 +35,7 @@ public actor Transcriber {
     static let asrVersion: AsrModelVersion = .v2
 
     public let engine: ASREngine
+    private var appleReady = false
     private var asrManager: AsrManager?
     private var unifiedManager: StreamingUnifiedAsrManager?
     private let audioConverter = AudioConverter()
@@ -56,19 +52,21 @@ public actor Transcriber {
     private static let sampleRate: Int = 16000
     static let shortClipVADBypassSeconds: Double = 30.0
 
-    public init(vadGate: VADGate = VADGate(), engine: ASREngine = .v2) {
+    public init(vadGate: VADGate = VADGate(), engine: ASREngine = .apple) {
         self.vadGate = vadGate
         self.engine = engine
     }
 
     public var isLoaded: Bool {
         switch engine {
+        case .apple: return appleReady
         case .v2: return asrManager != nil
         case .unified: return unifiedManager != nil
         }
     }
 
     public var modelState: ModelState { state }
+    public var sttModelID: String? { HarcVersion.sttModelID(engine: engine.rawValue) }
 
     /// Test hook: simulate a recent failed load so the on-demand retry
     /// cooldown path can be exercised without touching the network.
@@ -102,6 +100,11 @@ public actor Transcriber {
         state = .loading
         do {
             switch engine {
+            case .apple:
+                try await AppleSpeechEngine.prepare { [weak self] fraction in
+                    await self?.noteAppleDownloadProgress(fraction)
+                }
+                appleReady = true
             case .v2:
                 let manager = AsrManager(config: .default)
                 let models = try await AsrModels.downloadAndLoad(
@@ -129,6 +132,7 @@ public actor Transcriber {
         }
         state = .ready
         lastFailedLoadAt = nil
+        guard engine != .apple else { return }
         // VAD is an optimisation — its failure must never block ASR load.
         do {
             try await vadGate.loadModel()
@@ -137,6 +141,11 @@ public actor Transcriber {
                 "harc-stt: VAD model load failed (\(error.localizedDescription)) — transcription will run without VAD\n".utf8
             ))
         }
+    }
+
+    private func noteAppleDownloadProgress(_ fraction: Double) {
+        guard state == .loading || isDownloadingState else { return }
+        state = .downloading(progress: min(1, max(0, fraction)))
     }
 
     private func noteDownloadProgress(_ progress: DownloadProgress) {
@@ -181,7 +190,17 @@ public actor Transcriber {
     }
 
     public func transcribe(audioPath: String, vad: Bool) async throws -> TranscribeResult {
+        // OS-managed assets may have been evicted since startup. Re-enter the
+        // visible preparation/retry lifecycle rather than claiming readiness.
+        if engine == .apple, appleReady, !(await AppleSpeechEngine.assetsInstalled()) {
+            appleReady = false
+            state = .idle
+        }
         try await ensureEngineLoaded()
+        try Task.checkCancellation()
+        if engine == .apple {
+            return try await AppleSpeechEngine.transcribe(audioPath: audioPath)
+        }
 
         let samples: [Float]
         do {
@@ -231,6 +250,9 @@ public actor Transcriber {
         regions: [VoicedRegion]?
     ) async throws -> TranscribeResult {
         switch engine {
+        case .apple:
+            // Apple uses the original file, never a compacted or synthetic timeline.
+            throw DaemonError.transcriptionFailed("Apple speech requires the original audio file")
         case .v2:
             guard let manager = asrManager else { throw DaemonError.modelNotLoaded }
             return try await runParakeet(on: samples, with: manager, regions: regions)

@@ -26,7 +26,8 @@ final class HarcWindowController: NSWindowController {
         onSummarizeSession: ((Int64) -> Void)? = nil,
         reprocessState: LocalLibraryReprocessState = LocalLibraryReprocessState(),
         onReprocessRecording: ((Recording) -> Void)? = nil,
-        onReprocessAll: (() -> Void)? = nil
+        onReprocessAll: (() -> Void)? = nil,
+        canReviewProjects: @escaping @MainActor () -> Bool = { false }
     ) {
         let peopleVM = PeopleViewModel(store: store)
         let root = HarcWindowRootView(
@@ -44,7 +45,8 @@ final class HarcWindowController: NSWindowController {
             onSummarizeSession: onSummarizeSession,
             reprocessState: reprocessState,
             onReprocessRecording: onReprocessRecording,
-            onReprocessAll: onReprocessAll
+            onReprocessAll: onReprocessAll,
+            canReviewProjects: canReviewProjects
         )
         .environmentObject(prefs)
         .environmentObject(postProcessingState)
