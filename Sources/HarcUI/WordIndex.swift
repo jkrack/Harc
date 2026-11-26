@@ -45,7 +45,21 @@ public struct WordIndex: Sendable, Equatable {
     /// Returns the entry whose range contains `charOffset`. Whitespace
     /// between words returns nil.
     public func wordAt(charOffset: Int) -> Entry? {
-        entries.first { NSLocationInRange(charOffset, $0.range) }
+        guard charOffset >= 0 else { return nil }
+        // The forward scan creates non-overlapping ranges ordered by UTF-16
+        // offset. The AppKit timestamp gutter calls this during drawing.
+        var lower = 0
+        var upper = entries.count
+        while lower < upper {
+            let mid = lower + (upper - lower) / 2
+            if NSMaxRange(entries[mid].range) <= charOffset {
+                lower = mid + 1
+            } else {
+                upper = mid
+            }
+        }
+        guard lower < entries.count, NSLocationInRange(charOffset, entries[lower].range) else { return nil }
+        return entries[lower]
     }
 
     /// Resolve speaker labels and spaces within the clicked paragraph without
