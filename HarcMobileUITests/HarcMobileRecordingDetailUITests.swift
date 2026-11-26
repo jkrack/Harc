@@ -99,6 +99,12 @@ final class HarcMobileRecordingDetailUITests: XCTestCase {
         let position = app.sliders["Playback position"]
         XCTAssertTrue(position.waitForExistence(timeout: 10))
         XCTAssertTrue(position.isEnabled)
+        // XCTest's normalized adjustment is best-effort. Establish the exact
+        // paused origin through the real skip control before its midpoint drag,
+        // rather than starting from a fractional playback time and rounded AX value.
+        app.buttons["Back 15 seconds"].tap()
+        XCTAssertEqual(position.value as? String, "0 seconds of 60 seconds")
+        XCTAssertEqual(play.label, "Play")
         let beforeSeek = position.value as? String
         XCTAssertTrue(beforeSeek?.hasSuffix(" seconds of 60 seconds") == true)
         position.adjust(toNormalizedSliderPosition: 0.5)
